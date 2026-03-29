@@ -3,3 +3,4 @@ smolagents
 apscheduler
 requests
 groq
+openai
