@@ -173,6 +173,7 @@ Do not hardcode any other values. Use the variables defined above.
         print(f"[Scheduler] Failed to send to {email}: {e}")
 
 def start_scheduler(agent):
+    scheduler = BackgroundScheduler(timezone=pytz.timezone('Asia/Shanghai'))
     # 如果有现有调度器，先彻底关闭并清空
     if 'scheduler' in st.session_state:
         try:
@@ -268,6 +269,7 @@ with tab1:
 
 with tab2:
     st.subheader("📅 Set up Daily Digest")
+    st.caption("⏰ Times are in **Beijing Time (UTC+8)**.")
     with st.form("subscribe"):
         sub_email = st.text_input("Your email", value="your_email@example.com")
         sub_topic = st.text_input("Topic to send daily", value="Tech News")
