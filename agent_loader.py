@@ -157,7 +157,7 @@ def load_agent():
         # 在 Streamlit 中可以用 st.error，但在普通脚本中只能打印或抛出异常
         raise ValueError("Please set OPENROUTER_API_KEY environment variable.")
     model = OpenAIServerModel(
-        model_id="nvidia/nemotron-3-super-120b-a12b:free",
+        model_id="stepfun/step-3.5-flash:free",
         api_base="https://openrouter.ai/api/v1",
         api_key=api_key,
     )
