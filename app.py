@@ -212,12 +212,12 @@ Do not hardcode any other values. Use the variables defined above.
 
 # ---------- 调度器初始化（单例） ----------
 @st.cache_resource
-def get_scheduler(agent):
+def get_scheduler(_agent):
     """创建并启动调度器，返回单例"""
     scheduler = BackgroundScheduler(timezone=pytz.timezone('Asia/Shanghai'))
     subs = get_all_subscriptions()
     for sub_id, email, topic, city, send_hour, send_minute, enabled in subs:
-        _add_scheduler_jobs(scheduler, agent, sub_id, email, topic, city, send_hour, send_minute)
+        _add_scheduler_jobs(scheduler, _agent, sub_id, email, topic, city, send_hour, send_minute)
     scheduler.start()
     return scheduler
 
