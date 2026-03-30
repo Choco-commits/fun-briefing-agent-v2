@@ -4,3 +4,6 @@ apscheduler
 requests
 groq
 openai
+flask
+langchain
+langchain-openai

@@ -63,48 +63,6 @@ class CalculatorTool(Tool):
             return f"Error evaluating expression: {str(e)}"
         
 
-'''
-class SearchTool(Tool):
-    name = "web_search"
-    description = "Search the web for information. Returns a list of organic search results with titles and snippets."
-    inputs = {
-        "query": {
-            "type": "string",
-            "description": "The search query",
-        }
-    }
-    output_type = "string"
-
-    def forward(self, query: str) -> str:
-        api_key = os.environ.get("SERPAPI_KEY")
-        if not api_key:
-            return "Error: SERPAPI_KEY not set in environment variables."
-
-        url = "https://serpapi.com/search"
-        params = {
-            "q": query,
-            "api_key": api_key,
-            "num": 5,               
-            "hl": "zh-cn",
-        }
-        try:
-            response = requests.get(url, params=params, timeout=10)
-            data = response.json()
-            if "error" in data:
-                return f"Search error: {data['error']}"
-            results = data.get("organic_results", [])
-            if not results:
-                return "No results found."
-            output = []
-            for idx, r in enumerate(results[:5], 1):
-                title = r.get("title", "")
-                snippet = r.get("snippet", "")
-                link = r.get("link", "")
-                output.append(f"Title: {title}\nSnippet: {snippet}\nLink: {link}")
-            return "\n\n".join(output)
-        except Exception as e:
-            return f"Search failed: {str(e)}"
-'''
 class SearchTool(Tool):
     name = "web_search"
     description = "Search the web for information. Returns a list of organic search results with titles and snippets."
@@ -240,16 +198,24 @@ class SummarizeTool(Tool):
     def forward(self, items: list) -> list:
         if not items:
             return []
-        
+
+        use_langchain = os.environ.get("USE_LANGCHAIN", "false").lower() == "true"
+
+        if use_langchain:
+            return self._summarize_with_langchain(items)
+        else:
+            return self._summarize_with_groq(items)
+
+    # ==================== Groq 批量摘要（原有逻辑） ====================
+    def _summarize_with_groq(self, items):
         api_key = os.environ.get("GROQ_API_KEY")
         if not api_key:
-            # 无 API 时用本地规则生成
             return [self._local_summary(item) for item in items]
 
         try:
             from groq import Groq
             client = Groq(api_key=api_key)
-            # 构建 prompt，要求返回 JSON 格式的列表
+            # 构建批量 prompt，要求返回 JSON 列表
             prompt = (
                 "You are a creative assistant that extracts key details from news articles. "
                 "For each article below, produce a two-line summary. "
@@ -262,7 +228,7 @@ class SummarizeTool(Tool):
             )
             for idx, item in enumerate(items, 1):
                 prompt += f"{idx}. {item}\n"
-            
+
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
@@ -275,7 +241,6 @@ class SummarizeTool(Tool):
             )
             content = response.choices[0].message.content
             import json
-            # 尝试解析 JSON，期望 {"summaries": ["...", "..."]} 或直接数组
             data = json.loads(content)
             if isinstance(data, list):
                 summaries = data
@@ -288,78 +253,92 @@ class SummarizeTool(Tool):
                 summaries += [self._local_summary(items[i]) for i in range(len(summaries), len(items))]
             return summaries[:len(items)]
         except Exception as e:
-            # 降级：本地规则
+            print(f"[Groq] Batch summarization failed: {e}")
             return [self._local_summary(item) for item in items]
 
+    # ==================== LangChain 批量摘要（一次性生成） ====================
+    def _summarize_with_langchain(self, items):
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain_openai import ChatOpenAI
+        from langchain_core.output_parsers import StrOutputParser
+
+        api_key = os.environ.get("GROQ_API_KEY")
+        if not api_key:
+            return [self._local_summary(item) for item in items]
+
+        # 使用 Groq 模型（通过 LangChain 的 ChatOpenAI）
+        llm = ChatOpenAI(
+            model="llama-3.3-70b-versatile",
+            base_url="https://api.groq.com/openai/v1",
+            api_key=api_key,
+            temperature=0.7,
+            max_tokens=1000
+        )
+
+        # 构建批量 prompt，要求返回 JSON 列表（与 Groq 分支一致）
+        system_msg = "You are a creative assistant that extracts key details from news articles. Return only valid JSON."
+        human_template = """
+    For each article below, produce a two-line summary.
+    First line: a catchy, click-worthy headline (max 60 chars) that MUST include the location (city/region) if mentioned, and may include emojis to make it fun.
+    Second line: a detailed description (max 140 chars) that MUST include the dates, exact location, and unique features of the event.
+    Use a newline (\\n) to separate the two lines.
+    Return the summaries as a JSON list of strings, each string containing the two lines.
+    Example format: ["🌸 DC’s Bloom Fest: March 20–April 12\\nCelebrate spring in Washington DC with live music and breathtaking blooms.", ...]
+
+    Here are the articles:
+    {articles}
+    """
+        articles_text = "\n".join([f"{i+1}. {item}" for i, item in enumerate(items)])
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_msg),
+            ("human", human_template)
+        ])
+        chain = prompt | llm | StrOutputParser()
+
+        try:
+            result = chain.invoke({"articles": articles_text})
+            import json
+            data = json.loads(result)
+            if isinstance(data, list):
+                summaries = data
+            elif isinstance(data, dict) and "summaries" in data:
+                summaries = data["summaries"]
+            else:
+                summaries = [str(data)]
+            # 确保数量一致
+            if len(summaries) < len(items):
+                summaries += [self._local_summary(items[i]) for i in range(len(summaries), len(items))]
+            # 确保每个摘要包含换行符（如果模型没返回，手动拆分）
+            for i, s in enumerate(summaries):
+                if '\n' not in s:
+                    if len(s) > 60:
+                        headline = s[:60]
+                        desc = s[60:200]
+                    else:
+                        headline = s
+                        desc = ""
+                    summaries[i] = f"{headline}\n{desc}"
+            return summaries[:len(items)]
+        except Exception as e:
+            print(f"[LangChain] Batch summarization failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return [self._local_summary(item) for item in items]
+
+    # ==================== 本地降级（不调用 LLM） ====================
     def _local_summary(self, item: str) -> str:
         """本地生成两行摘要，不调用 LLM"""
-        # 简单提取标题和片段
         if "Title:" in item and "Snippet:" in item:
             parts = item.split("Snippet:")
             title_part = parts[0].replace("Title:", "").strip()
             snippet_part = parts[1].strip() if len(parts) > 1 else ""
         else:
-            # 可能是纯 snippet
             title_part = ""
             snippet_part = item
-        # 构造第一行：标题或片段的前60字符
         if title_part:
             headline = title_part[:60]
         else:
             headline = snippet_part[:60]
         description = snippet_part[:140] if len(snippet_part) > 60 else snippet_part
         return f"{headline}\n{description}"
-
-'''
-class SummarizeTool(Tool):
-    name = "summarize"
-    description = "Summarize a news item into a fun, informative sentence (max 200 characters). The tool will automatically split it into a headline and description."
-    inputs = {
-        "title": {"type": "string", "description": "The title of the article."},
-        "snippet": {"type": "string", "description": "The snippet or short description."}
-    }
-    output_type = "string"
-
-    def forward(self, title: str, snippet: str) -> str:
-        api_key = os.environ.get("GROQ_API_KEY")
-        if not api_key:
-            combined = f"{title}: {snippet}"
-            return self._split_into_two_lines(combined)
-
-        try:
-            from groq import Groq
-            client = Groq(api_key=api_key)
-            combined_text = f"Title: {title}\nSnippet: {snippet}"
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": "You are a creative assistant. Create a single, fun, informative sentence (max 200 characters) that captures the essence of the news. Include key details like location, time, unique features, or interesting facts. End with an emoji if appropriate."},
-                    {"role": "user", "content": f"Create the sentence:\n{combined_text}"}
-                ],
-                temperature=0.8,
-                max_tokens=300,
-            )
-            summary = response.choices[0].message.content.strip()
-            # 确保长度不超过200
-            if len(summary) > 200:
-                summary = summary[:197] + "..."
-            return self._split_into_two_lines(summary)
-        except Exception as e:
-            combined = f"{title}: {snippet}"
-            return self._split_into_two_lines(combined)
-
-    def _split_into_two_lines(self, text: str) -> str:
-        # 将一段文本拆分为两行：前60字符作为标题，剩余作为描述
-        # 但尽量在单词边界拆分，避免截断单词
-        if len(text) <= 60:
-            headline = text
-            description = ""
-        else:
-            # 尝试在空格处拆分
-            split_pos = text.rfind(' ', 0, 60)
-            if split_pos == -1:
-                split_pos = 60
-            headline = text[:split_pos]
-            description = text[split_pos:].strip()
-        return f"{headline}\n{description}"
-'''
