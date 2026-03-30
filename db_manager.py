@@ -80,3 +80,15 @@ def delete_subscription(sub_id):
     c.execute('DELETE FROM subscriptions WHERE id = ?', (sub_id,))
     conn.commit()
     conn.close()
+
+def add_subscription(email, topic, city, send_hour, send_minute=0):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO subscriptions (email, topic, city, send_hour, send_minute)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (email, topic, city, send_hour, send_minute))
+    conn.commit()
+    sub_id = c.lastrowid
+    conn.close()
+    return sub_id
