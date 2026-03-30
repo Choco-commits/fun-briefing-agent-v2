@@ -300,7 +300,12 @@ with tab2:
     else:
         for sub_id, email, topic, city, send_hour, send_minute, enabled in subs:
             col1, col2 = st.columns([4,1])
-            col1.write(f"📧 {email} - **{topic}** at {send_hour:02d}:{send_minute:02d} (city: {city or 'None'})")
+            def mask_email(email):
+                local, domain = email.split('@')
+                masked_local = local[:3] + '***' if len(local) > 3 else '***'
+                return f"{masked_local}@{domain}"
+            
+            col1.write(f"📧 {mask_email(email)} - **{topic}** at {send_hour:02d}:{send_minute:02d} (city: {city or 'None'})")
             if col2.button("❌ Delete", key=f"del_{sub_id}"):
                 delete_subscription(sub_id)
                 _remove_scheduler_jobs(scheduler, sub_id)
