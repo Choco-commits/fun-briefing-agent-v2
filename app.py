@@ -173,8 +173,17 @@ Do not hardcode any other values. Use the variables defined above.
         print(f"[Scheduler] Failed to send to {email}: {e}")
 
 def start_scheduler(agent):
+    # 如果有现有调度器，先彻底关闭并清空
+    if 'scheduler' in st.session_state:
+        try:
+            st.session_state.scheduler.shutdown(wait=False)
+        except:
+            pass
+        del st.session_state.scheduler
+    
     scheduler = BackgroundScheduler()
     subs = get_all_subscriptions()
+    
     for sub_id, email, topic, city, send_hour, send_minute, enabled in subs:
         # 发送任务（原时间）
         scheduler.add_job(
@@ -205,6 +214,7 @@ def start_scheduler(agent):
         )
         print(f"[Scheduler] Added send job for {email} at {send_hour:02d}:{send_minute:02d}")
         print(f"[Scheduler] Added pre-gen job for {email} at {pre_hour:02d}:{pre_minute:02d}")
+    
     scheduler.start()
     return scheduler
 
